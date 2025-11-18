@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>철도선로 안전 모니터링</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <style>
+    :root{--bg:#1f2d3a; --panel:#24333f; --muted:#90a0ad; --accent:#1fbf6b; --card:#17232a; --danger:#e04b4b; --warning:#f59e0b; --info:#5b9df9}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Noto Sans KR', sans-serif;background:var(--bg);color:#dbe9f3}
+    .app{display:grid;grid-template-columns:260px 1fr 420px;grid-template-rows:auto 1fr;gap:18px;padding:18px;height:100vh;box-sizing:border-box}
+    header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;background:linear-gradient(90deg,#162428, #12323a);border-radius:6px}
+    header .title{font-weight:700;letter-spacing:1px}
+    .sidebar{background:var(--panel);padding:18px;border-radius:6px}
+    .menu{display:flex;flex-direction:column;gap:8px}
+    .menu button{background:transparent;border:none;color:var(--muted);padding:10px 12px;text-align:left;border-radius:6px;cursor:pointer}
+    .menu button.active{background:#15272b;color:#fff}
+    .left-bottom{margin-top:12px;color:var(--muted);font-size:12px}
+
+    .map-wrap{display:flex;flex-direction:column;gap:12px}
+    #map{height:62vh;border-radius:6px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,0.5)}
+    .map-info{display:flex;gap:10px;align-items:center}
+    .legend{background:var(--card);padding:8px;border-radius:6px;color:var(--muted);font-size:13px}
+
+    .right{background:var(--panel);padding:18px;border-radius:6px;display:flex;flex-direction:column;gap:12px}
+    .cctv{background:#0f1a20;border-radius:6px;padding:8px;min-height:220px;display:flex;flex-direction:column}
+    .cctv video,.cctv img{width:100%;height:220px;object-fit:cover;border-radius:4px}
+    .events{background:var(--card);padding:8px;border-radius:6px;overflow:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left}
+    th{color:var(--muted);font-weight:500}
+
+    .timeline{background:#0e2327;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:10px}
+    .rail{position:relative;height:56px;background:linear-gradient(90deg,#0b2327,#102a2f);border-radius:6px}
+    .tick{position:absolute;top:50%;transform:translateY(-50%);width:2px;height:12px;background:rgba(255,255,255,0.06)}
+    .marker-small{position:absolute;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+
+    /* train pointer styling fallback for older browsers */
+    .train-pointer { pointer-events: none; }
+
+    @media (max-width:1100px){.app{grid-template-columns:220px 1fr;grid-template-rows:auto 1fr 280px}.right{grid-column:1/-1}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:1px">
+        철도선로 안전모니터링
+      </div>
+      <div style="font-size:14px;color:var(--muted);font-weight:600" id="live-time">2025-11-18 12:00:00</div>
+      <div style="display:flex;align-items:center;gap:14px;font-size:13px;color:var(--muted)">
+        <div style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <div style="width:28px;height:28px;border-radius:50%;background:#31424d;display:flex;align-items:center;justify-content:center;font-size:12px">👤</div>
+          관리자
+        </div>
+        <div style="cursor:pointer;padding:6px 10px;border-radius:4px;background:#162b30;color:#dbe9f3">로그인</div>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+        <img src="https://raw.githubusercontent.com/korekap/rail-icons/main/train.png" alt="logo" width="64" onerror="this.style.display='none'"/>
+        <div>
+          <div style="font-weight:700">KORAIL</div>
+          <div style="font-size:12px;color:var(--muted)">한국철도공사</div>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="active">통합관제</button>
+        <button>이벤트 관리</button>
+        <button>차량이력</button>
+        <button>통계관리</button>
+      </div>
+      <div class="left-bottom">한국교통대학교 소프트웨어학과 유익, 염아현 &copy; 2025</div>
+    </aside>
+
+    <main class="map-wrap">
+      <div id="map"></div>
+      <div class="map-info">
+        <div class="legend">경로: 중부선(충주) → 부발역</div>
+        <div style="flex:1"></div>
+      </div>
+
+      <div class="timeline">
+        <div style="color:var(--muted);font-size:13px">실시간 이벤트 타임라인</div>
+        <div class="rail" id="rail">
+        </div>
+      </div>
+    </main>
+
+    <aside class="right">
+      <div class="cctv">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:var(--muted)">
+          <div>CCTV</div>
+          <div style="font-size:12px">위치: 충북 충주시</div>
+        </div>
+        <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop&ixlib=rb-4.0.3&s=placeholder" alt="cctv"/>
+      </div>
+
+      <div class="events">
+        <div style="font-weight:700;margin-bottom:8px">이벤트 목록</div>
+        <table>
+          <thead>
+            <tr><th>발생시간</th><th>발생내용</th><th>위치(km)</th><th>상태</th></tr>
+          </thead>
+          <tbody id="event-table">
+          </tbody>
+        </table>
+      </div>
+
+    </aside>
+  </div>
+
+<script>
+  /* =============================
+     지도 및 경로 설정 영역
+     - 충주 → 부발역 기준 데이터
+     - Leaflet 기반 OSM 맵 렌더링
+     ============================= */
+
+  // 경로 좌표 (충주 → 부발역)
+  const points = [
+    {lat:36.9813, lng:127.9359, label:'충주(출발)', type:'station'},
+    {lat:37.0200, lng:127.8600, label:'지점 A', type:'info'},
+    {lat:37.0800, lng:127.7500, label:'지점 B', type:'danger'},
+    {lat:37.1600, lng:127.6100, label:'지점 C(공사)', type:'work'},
+    {lat:37.260411, lng:127.490308, label:'부발역(도착)', type:'station'}
+  ];
+
+  // Leaflet 지도 초기화
+  const map = L.map('map',{zoomControl:false}).setView([37.05,127.7],10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'© OpenStreetMap contributors'
+  }).addTo(map);
+
+  // 경로 라인(polyline) 생성
+  const routeCoords = points.map(p=>[p.lat,p.lng]);
+  L.polyline(routeCoords,{
+    color:'#2ecc71',
+    weight:6,
+    opacity:0.95,
+    lineJoin:'round'
+  }).addTo(map);
+
+  // 마커 생성 함수
+  function createIcon(color,iconChar){
+    return L.divIcon({
+      className:'custom-icon',
+      html:`<div style="background:${color};width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.45);">${iconChar}</div>`,
+      iconSize:[40,40],
+      iconAnchor:[20,20]
+    });
+  }
+
+  // 지도 마커 렌더링 함수 - 현재 열차 위치 아이콘
+  function createTrainPointer(){
+    return L.divIcon({
+      className:'train-pointer',
+      html:`<div style="position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;">
+        <div style="width:26px;height:26px;border-radius:50%;background:#1fbf6b;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:700;box-shadow:0 3px 8px rgba(0,0,0,0.55);">🚌</div>
+        <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);
+                    width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;
+                    border-top:10px solid #1fbf6b;"></div>
+      </div>`,
+      iconSize:[34,40],
+      iconAnchor:[17,34]
+    });
+  }
+
+  /* 기존 주요 지점 마커 렌더링 */
+  points.forEach((p,i)=>{
+    let ic;
+
+    // 유형별 마커 아이콘 지정
+    if(p.type==='station') ic = createIcon('#2f80ed','🚉');
+    else if(p.type==='danger') ic = createIcon('#e04b4b','!');
+    else if(p.type==='work') ic = createIcon('#f59e0b','⚒');
+    else ic = createIcon('#2ecc71','●');
+
+    // 마커 생성
+    const m = L.marker([p.lat,p.lng],{icon:ic}).addTo(map);
+
+    // 팝업 정보
+    m.bindPopup(`
+      <strong>${p.label}</strong><br>
+      위도: ${p.lat.toFixed(6)}<br>
+      경도: ${p.lng.toFixed(6)}<br>
+      상태: ${p.type}
+    `);
+  });
+
+  // 이벤트 목록(테이블) 렌더링
+  const events = [
+    {time:'2025-11-18 09:10:23',content:'선로이상감지',km:3,status:'발생',type:'danger',posIndex:2},
+    {time:'2025-11-18 09:25:10',content:'공사구간(통제)',km:15,status:'처리',type:'work',posIndex:3},
+    {time:'2025-11-18 09:40:00',content:'낙석의심',km:28,status:'확인',type:'info',posIndex:4}
+  ];
+
+  const tbody = document.getElementById('event-table');
+  events.forEach(e=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${e.time}</td><td>${e.content}</td><td>${e.km}</td><td>${e.status}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  /* =============================
+     타임라인(하단 선형 이벤트 표시)
+     ============================= */
+  const rail = document.getElementById('rail');
+  const ticks = 48; // 눈금 개수
+
+  // 눈금 생성
+  for(let i=0;i<ticks;i++){
+    const t = document.createElement('div');
+    t.className='tick';
+    t.style.left = (100*(i/(ticks-1)))+'%';
+    rail.appendChild(t);
+  }
+
+  // 위치 매핑 (예시)
+  const positions = [2,12,25,36,46];
+  const colors = {station:'#9b59b6',danger:'#e04b4b',work:'#f59e0b',info:'#2ecc71'};
+
+  // 타임라인 마커 생성
+  points.forEach((p,idx)=>{
+    const el = document.createElement('div');
+    el.className='marker-small';
+    el.style.left = (100*(positions[idx]/(ticks-1)))+'%';
+    el.style.background = colors[p.type] || '#2ecc71';
+    el.textContent = p.type==='station'? '🚆' : (p.type==='danger'?'!' : (p.type==='work'?'W':'·'));
+    rail.appendChild(el);
+
+  /* =============================
+     현재 열차 위치 타임라인 포인터 추가
+     - 지도와 동일한 진행 방향 기준
+     - 예시: positions 배열 기준으로 0~ticks-1 범위 값 사용
+     ============================= */
+  const trainTimelinePos = 22; // 예시값: 중간 위치 근처
+
+  const trainWrap = document.createElement('div');
+  trainWrap.style.position = 'absolute';
+  trainWrap.style.left = (100 * (trainTimelinePos / (ticks - 1))) + '%';
+  trainWrap.style.top = '38%'; // 기존 50% → 38% (타임라인에서 더 위로 올림)
+  trainWrap.style.transform = 'translate(-50%, -40%)'; // 위치 보정
+  trainWrap.style.zIndex = '20';
+
+  const trainPointer = document.createElement('div');
+  trainPointer.style.width = '30px';
+  trainPointer.style.height = '30px';
+  trainPointer.style.display = 'flex';
+  trainPointer.style.alignItems = 'center';
+  trainPointer.style.justifyContent = 'center';
+  trainPointer.style.borderRadius = '50%';
+  trainPointer.style.background = '#1fbf6b';
+  trainPointer.style.color = '#fff';
+  trainPointer.style.fontSize = '16px';
+  trainPointer.style.fontWeight = '700';
+  trainPointer.innerHTML = '🚌';
+
+  const trainTriangle = document.createElement('div');
+  trainTriangle.style.position = 'absolute';
+  trainTriangle.style.bottom = '-12px';
+  trainTriangle.style.left = '50%';
+  trainTriangle.style.transform = 'translateX(-50%)';
+  trainTriangle.style.width = '0';
+  trainTriangle.style.height = '0';
+  trainTriangle.style.borderLeft = '8px solid transparent';
+  trainTriangle.style.borderRight = '8px solid transparent';
+  trainTriangle.style.borderTop = '12px solid #1fbf6b';
+
+  trainWrap.appendChild(trainPointer);
+  trainWrap.appendChild(trainTriangle);
+
+  rail.appendChild(trainWrap);
+  });
+
+  /* =============================
+     지도 범위 자동 맞춤
+     ============================= */
+  map.fitBounds(routeCoords,{padding:[40,40]});
+
+  /* =============================
+     데모용: 첫 마커 팝업 자동 오픈
+     ============================= */
+  setTimeout(()=>{
+    const first = Object.values(map._layers).find(l=>l instanceof L.Marker);
+    if(first) first.openPopup();
+  },600);
+
+  /* =============================
+     데모용: 현재 열차 위치(포인터) 추가
+     - 실제 실시간 데이터가 있으면 해당 좌표로 갱신하면 됩니다.
+     ============================= */
+  // 예시 위치: 중간 지점에 현재 열차 포인터 추가
+  const trainPos = [37.10, 127.72];
+  L.marker(trainPos, { icon: createTrainPointer() }).addTo(map).bindPopup('<strong>현재 열차 위치(예시)</strong>');
+
+  // 헤더의 라이브 시간 자동 갱신
+  function updateLiveTime(){
+    const el = document.getElementById('live-time');
+    const now = new Date();
+    // 한국 시간 표시 
+    const s = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' +
+              String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+    el.textContent = s;
+  }
+  updateLiveTime();
+  setInterval(updateLiveTime,1000);
+</script>
+</body>
+</html>
