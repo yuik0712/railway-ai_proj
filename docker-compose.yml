@@ -1,18 +1,32 @@
 version: '3.8'
 
+# Airflow에서 사용할 불륨 정의
+volumes:
+  mongo_data:
+  airflow_logs:
+  airflow_db:
+
+# Airflow에서 사용할 네트워크 정의
+networks:
+  video-net:
+    driver: bridgeetwork
+
+# kafka
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
+    image: confluentinc/cp-zookeeper:7.3.2
     container_name: zookeeper
+    networks:
+      - video-net
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
 
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:7.3.2
     container_name: kafka
+    networks:
+      - video-net
     depends_on:
       - zookeeper
     ports:
@@ -20,28 +34,20 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Docker 내부 통신용 리스너
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
+  # MongoDB
   mongodb:
-    image: mongo:7.0
+    image: mongo:6.0
     container_name: mongodb
+    networks:
+      - video-net
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
 
-  mongo-express:
-    image: mongo-express:1.0.0
-    container_name: mongo_express
-    depends_on:
-      - mongodb
-    ports:
-      - "8081:8081"
-    environment:
-      ME_CONFIG_MONGODB_SERVER: mongodb
-      ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: password
-
-volumes:
-  mongo_data:
+  # Airflow 초기화 및 DB 마이그레이션
+  airflow-init:
